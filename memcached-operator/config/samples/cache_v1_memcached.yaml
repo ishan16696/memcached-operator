@@ -1,0 +1,8 @@
+apiVersion: cache.example.com/v1
+kind: MemCached
+metadata:
+  name: memcache
+  namespace: dev
+spec:
+  type: caching
+  replicas: 1

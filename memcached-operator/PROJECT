@@ -1,0 +1,7 @@
+domain: example.com
+repo: memcached
+resources:
+- group: cache
+  kind: MemCached
+  version: v1
+version: "2"
