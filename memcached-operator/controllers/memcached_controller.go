@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -64,6 +65,18 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{Requeue: true, RequeueAfter: RequeueTime}, err
 	}
 
+	// Add Finalizers to memcache
+	FinalizerName := "memcache.io/finalizer"
+	if finalizers := sets.NewString(memcache.Finalizers...); !finalizers.Has(FinalizerName) {
+		log.Info("Adding finalizer")
+		finalizers.Insert(FinalizerName)
+		memcache.Finalizers = finalizers.UnsortedList()
+		if err := r.Update(ctx, memcache); err != nil {
+			log.Error(err, "failed to add finalizer.")
+			return ctrl.Result{Requeue: true, RequeueAfter: RequeueTime}, nil
+		}
+	}
+
 	deploy := &appsv1.Deployment{}
 	// check if deployment already exits, if not create a new one
 	if err := r.Get(ctx, types.NamespacedName{Name: memcache.Name, Namespace: memcache.Namespace}, deploy); err != nil {
@@ -71,7 +84,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			deploy = createDesiredDeployment(memcache)
 			log.Info("creating a new Deployment")
 			if err := r.Create(ctx, deploy); err != nil {
-				log.Info("failed to create a deployment: %v", err)
+				log.Error(err, "failed to create a deployment")
 				return ctrl.Result{}, err
 			}
 			// Deployment created successfully - return and requeue
@@ -86,7 +99,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	if *deploy.Spec.Replicas != size {
 		deploy.Spec.Replicas = &size
 		if err := r.Update(ctx, deploy); err != nil {
-			log.Info("failed to update deployment with correct replicas")
+			log.Error(err, "failed to update deployment with correct replicas")
 			return ctrl.Result{}, err
 		}
 	}
@@ -94,7 +107,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	if deploy.Status.ReadyReplicas != deploy.Status.Replicas {
 		memcache.Status.Phase = cachev1.MemcachedPhaseCreating
 		if err := r.Update(ctx, memcache); err != nil {
-			log.Info("failed to update deployment with correct status")
+			log.Error(err, "failed to update deployment with correct status")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: RequeueTime}, nil
@@ -104,7 +117,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		log.Info("updating memcache status...")
 		err := r.Update(ctx, memcache)
 		if err != nil {
-			log.Info("failed to update deployment with correct status")
+			log.Error(err, "failed to update deployment with correct status")
 			return ctrl.Result{}, err
 		}
 	}
@@ -116,7 +129,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			svc = serviceForMemcached(memcache)
 			log.Info("creating a new service")
 			if err := r.Create(ctx, svc); err != nil {
-				log.Info("failed to create a service: %v", err)
+				log.Error(err, "failed to create a service")
 				return ctrl.Result{}, err
 			}
 			// service created successfully - return and requeue
