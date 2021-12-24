@@ -65,7 +65,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	deploy := &appsv1.Deployment{}
-	// check if deployment already exits
+	// check if deployment already exits, if not create a new one
 	if err := r.Get(ctx, types.NamespacedName{Name: memcache.Name, Namespace: memcache.Namespace}, deploy); err != nil {
 		if errors.IsNotFound(err) {
 			deploy = createDesiredDeployment(memcache)
@@ -82,7 +82,50 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
-	log.Info("Succeddfully reconciled...")
+	size := memcache.Spec.Replicas
+	if *deploy.Spec.Replicas != size {
+		deploy.Spec.Replicas = &size
+		if err := r.Update(context.TODO(), deploy); err != nil {
+			log.Info("failed to update deployment with correct replicas")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if deploy.Status.ReadyReplicas != deploy.Status.Replicas {
+		memcache.Status.Phase = cachev1.MemcachedPhaseCreating
+		if err := r.Update(context.TODO(), memcache); err != nil {
+			log.Info("failed to update deployment with correct status")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: RequeueTime}, nil
+	} else {
+		memcache.Status.Phase = cachev1.MemcachedPhaseRunning
+		err := r.Update(context.TODO(), memcache)
+		if err != nil {
+			log.Info("failed to update deployment with correct status")
+			return ctrl.Result{}, err
+		}
+	}
+
+	svc := &corev1.Service{}
+	// Check if the Service already exists, if not create a new one
+	if err := r.Get(ctx, types.NamespacedName{Name: memcache.Name, Namespace: memcache.Namespace}, svc); err != nil {
+		if errors.IsNotFound(err) {
+			svc = serviceForMemcached(memcache)
+			log.Info("creating a new service")
+			if err := r.Create(ctx, svc); err != nil {
+				log.Info("failed to create a service: %v", err)
+				return ctrl.Result{}, err
+			}
+			// service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		} else {
+			log.Info("failed to get service")
+			return ctrl.Result{Requeue: true, RequeueAfter: RequeueTime}, err
+		}
+	}
+
+	log.Info("Successfully reconciled...")
 	return ctrl.Result{}, nil
 }
 func (r *MemCachedReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -91,6 +134,7 @@ func (r *MemCachedReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// createDesiredDeployment function takes in a Memcached object and returns a deployment for that object.
 func createDesiredDeployment(memcache *cachev1.MemCached) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -130,26 +174,26 @@ func createDesiredDeployment(memcache *cachev1.MemCached) *appsv1.Deployment {
 	}
 }
 
-// // serviceForMemcached function takes in a Memcached object and returns a Service for that object.
-// func serviceForMemcached(m *cachev1.MemCached) *corev1.Service {
-// 	ls := map[string]string{
-// 		"app": m.ObjectMeta.Name,
-// 	}
-// 	ser := &corev1.Service{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name:      m.Name,
-// 			Namespace: m.Namespace,
-// 		},
-// 		Spec: corev1.ServiceSpec{
-// 			Selector: ls,
-// 			Ports: []corev1.ServicePort{
-// 				{
-// 					Port: 11211,
-// 					Name: m.Name,
-// 				},
-// 			},
-// 		},
-// 	}
+// serviceForMemcached function takes in a Memcached object and returns a Service for that object.
+func serviceForMemcached(m *cachev1.MemCached) *corev1.Service {
+	ls := map[string]string{
+		"app": m.ObjectMeta.Name,
+	}
+	ser := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name,
+			Namespace: m.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: ls,
+			Ports: []corev1.ServicePort{
+				{
+					Port: 11211,
+					Name: m.Name,
+				},
+			},
+		},
+	}
 
-// 	return ser
-// }
+	return ser
+}
