@@ -85,7 +85,7 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	size := memcache.Spec.Replicas
 	if *deploy.Spec.Replicas != size {
 		deploy.Spec.Replicas = &size
-		if err := r.Update(context.TODO(), deploy); err != nil {
+		if err := r.Update(ctx, deploy); err != nil {
 			log.Info("failed to update deployment with correct replicas")
 			return ctrl.Result{}, err
 		}
@@ -93,14 +93,16 @@ func (r *MemCachedReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	if deploy.Status.ReadyReplicas != deploy.Status.Replicas {
 		memcache.Status.Phase = cachev1.MemcachedPhaseCreating
-		if err := r.Update(context.TODO(), memcache); err != nil {
+		if err := r.Update(ctx, memcache); err != nil {
 			log.Info("failed to update deployment with correct status")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: RequeueTime}, nil
 	} else {
 		memcache.Status.Phase = cachev1.MemcachedPhaseRunning
-		err := r.Update(context.TODO(), memcache)
+		memcache.Status.ReadyReplicas = deploy.Status.ReadyReplicas
+		log.Info("updating memcache status...")
+		err := r.Update(ctx, memcache)
 		if err != nil {
 			log.Info("failed to update deployment with correct status")
 			return ctrl.Result{}, err
@@ -185,11 +187,13 @@ func serviceForMemcached(m *cachev1.MemCached) *corev1.Service {
 			Namespace: m.Namespace,
 		},
 		Spec: corev1.ServiceSpec{
+			Type:     "NodePort",
 			Selector: ls,
 			Ports: []corev1.ServicePort{
 				{
-					Port: 11211,
-					Name: m.Name,
+					Port:     11211,
+					Name:     m.Name,
+					NodePort: 30008,
 				},
 			},
 		},
